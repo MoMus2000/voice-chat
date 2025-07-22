@@ -85,27 +85,34 @@ handle_connection(Conn, ID) ->
   end.
 
 dial(Conn, Contact) ->
-    Entries = ets:tab2list(contact_registry),
-    io:format("Entries: ~p~n", [Entries]),
-    io:format("Dialing ~p\n", [Contact]),
+    ContactReg = list_to_integer(Contact),
+    Result = ets:lookup(contact_registry, ContactReg),
 
-    X = list_to_integer(Contact),
-    io:format("ON: ~p\n",[X]),
-
-    Result = ets:lookup(contact_registry, X),
-    io:format("Result ~p\n", [Result]),
     case Result of
       [] ->
         gen_tcp:send(Conn, <<"Contact not Found..\n">>);
-      [{_, _}] ->
-        Msg = io_lib:format("Dialing ~p", [Contact]),
-        gen_tcp:send(Conn, list_to_binary(Msg)),
-        lists:foreach(fun(_N) -> 
-            gen_tcp:send(Conn, <<".">>),
-            timer:sleep(1000)
-            end, 
-            lists:seq(1, 5))
+      [{_, Value}] ->
+        {OtherConn, _, _} = Value,
+        
+        % This is supposed to come from the dialer not the server
+
+        Cmd = "ffmpeg -f avfoundation -i \":0\" -c:a libopus -f ogg -",
+        Port = open_port({spawn, Cmd}, [exit_status]),
+
+        wait_for_exit(Port, OtherConn)
+
       end,
+
     gen_tcp:send(Conn, <<"\n">>),
     ok.
+
+wait_for_exit(Port, Socket) ->
+    receive
+        {_, {exit_status, Status}} ->
+            io:format("ffmpeg exited with status: ~p~n", [Status]);
+        {_, {data, Data}} ->
+            io:format("Received data: ~p~n", [length(Data)]),
+            gen_tcp:send(Socket, Data),
+            wait_for_exit(Port, Socket)
+    end.
 
